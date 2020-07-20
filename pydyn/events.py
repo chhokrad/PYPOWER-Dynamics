@@ -13,6 +13,8 @@ Sets up and handles events in the simulation
 import numpy as np
 from pypower.idx_bus import BUS_I, BUS_TYPE, PD, QD, GS, BS, BUS_AREA, \
     VM, VA, VMAX, VMIN, LAM_P, LAM_Q, MU_VMAX, MU_VMIN, REF
+from pypower.idx_brch import *
+from decimal import Decimal
 
 class events:
     def __init__(self, filename):
@@ -31,10 +33,10 @@ class events:
                 
                 # Parse signal events
                 if tokens[1].strip() in ['SIGNAL', 'FAULT', 'LOAD', 'STATE']:
-                    self.event_stack.append([float(tokens[0].strip()), tokens[1].strip(), tokens[2].strip(), tokens[3].strip(), tokens[4].strip()])
+                    self.event_stack.append([Decimal(tokens[0].strip()), tokens[1].strip(), tokens[2].strip(), tokens[3].strip(), tokens[4].strip()])
                 
                 elif tokens[1].strip() in ['CLEAR_FAULT', 'TRIP_BRANCH']:
-                    self.event_stack.append([float(tokens[0].strip()), tokens[1].strip(), tokens[2].strip()])
+                    self.event_stack.append([Decimal(tokens[0].strip()), tokens[1].strip(), tokens[2].strip()])
                     
         f.close()
         
@@ -45,7 +47,11 @@ class events:
         refactorise = False
         
         if self.event_stack:
+            # print(t)
+            # print(self.event_stack[0][0])
+            # print(t - self.event_stack[0][0])
             if self.event_stack[0][0] < t:
+                
                 print('Event missed at t=' + str(self.event_stack[0][0]) + 's... Check simulation time step!')
                 del self.event_stack[0]
             
@@ -105,7 +111,10 @@ class events:
                 
                 if event_type == 'TRIP_BRANCH':
                     branch_id = int(self.event_stack[0][2])
-                    ppc["branch"] = np.delete(ppc["branch"],branch_id, 0)
+                    print(ppc["branch"][branch_id, BR_STATUS])
+                    ppc["branch"][branch_id, BR_STATUS] = 0
+                    print(ppc["branch"][branch_id, BR_STATUS])
+                    # ppc["branch"] = np.delete(ppc["branch"],branch_id, 0)
                     refactorise = True
                     
                     print('TRIP_BRANCH event at t=' + str(t) + 's on branch "' + str(branch_id) + '".')

@@ -9,21 +9,26 @@ PYPOWER-Dynamics
 Time-domain simulation engine
 
 """
-
+from decimal import *
 from pydyn.interface import init_interfaces
 from pydyn.mod_Ybus import mod_Ybus
 from pydyn.version import pydyn_ver
 
 from scipy.sparse.linalg import splu
 import numpy as np
+import matplotlib.pyplot as plt
 
 from pypower.runpf import runpf
 from pypower.ext2int import ext2int
+from pypower.int2ext import int2ext
 from pypower.makeYbus import makeYbus
 from pypower.idx_bus import BUS_I, BUS_TYPE, PD, QD, GS, BS, BUS_AREA, \
-    VM, VA, VMAX, VMIN, LAM_P, LAM_Q, MU_VMAX, MU_VMIN, REF
-    
-def run_sim(ppc, elements, dynopt = None, events = None, recorder = None):
+    VM, VA, VMAX, VMIN, LAM_P, LAM_Q, MU_VMAX, MU_VMIN, REF, BASE_KV
+from pypower.idx_brch import * 
+
+getcontext().prec = 6
+
+def run_sim(ppc, elements, dynopt = None, events = None, recorder = None, ex=None):
     """
     Run a time-domain simulation
     
@@ -47,8 +52,8 @@ def run_sim(ppc, elements, dynopt = None, events = None, recorder = None):
     
     # Program options
     if dynopt:
-        h = dynopt['h']             
-        t_sim = dynopt['t_sim']           
+        h = Decimal(str(dynopt['h']))             
+        t_sim = Decimal(str(dynopt['t_sim']))           
         max_err = dynopt['max_err']        
         max_iter = dynopt['max_iter']
         verbose = dynopt['verbose']
@@ -82,6 +87,31 @@ def run_sim(ppc, elements, dynopt = None, events = None, recorder = None):
     results, success = runpf(ppc) 
     ppc["bus"][:, VM] = results["bus"][:, VM]
     ppc["bus"][:, VA] = results["bus"][:, VA]
+
+    # Lets see currents
+    Sf = results["branch"][:, PF] + 1j * results["branch"][:, QF]
+    St = results["branch"][:, PT] + 1j * results["branch"][:, QT]
+    print(Sf)
+    print(St)
+    V_bus = results["bus"][:, BASE_KV] * results["bus"][:, VM] * np.exp(1j * results["bus"][:, VA])
+    print(V_bus)
+    
+    
+    for ctr in range(0, len(Sf)):
+        f_bus = int(results["branch"][ctr, F_BUS])-1
+        t_bus = int(results["branch"][ctr, T_BUS])-1
+        If = np.conjugate(Sf[ctr]/V_bus[f_bus])
+        It = np.conjugate(St[ctr]/V_bus[t_bus])
+        # print("--------Initial--------------")
+        print("Current injected into branch {} at bus {} is {}".format(ctr, f_bus+1, If))
+        print("Current injected into branch {} at bus {} is {}".format(ctr, t_bus+1, It))
+        
+
+    # Vt = results.bus(t, VM) * exp(1j * results.bus(t, VA))
+    # If = conj(Sf / Vf)
+    # # complex current injected into branch k at bus f
+    # It = conj(St / Vt)
+    # # complex current injected into branch k at bus t
     
     # Build Ybus matrix
     ppc_int = ext2int(ppc)
@@ -136,6 +166,8 @@ def run_sim(ppc, elements, dynopt = None, events = None, recorder = None):
     y1 = []
     v_prev = v0
     print('Simulating...')
+    data = []
+    time = []
     for t in range(int(t_sim / h) + 1):
         if np.mod(t,1/h) == 0:
             print('t=' + str(t*h) + 's')
@@ -149,18 +181,25 @@ def run_sim(ppc, elements, dynopt = None, events = None, recorder = None):
         for j in range(4):
             # Solve step of differential equations
             for element in elements.values():
-                element.solve_step(h,j) 
+                element.solve_step(float(h),j) 
             
             # Interface with network equations
             v_prev = solve_network(sources, v_prev, Ybus_inv, ppc_int, len(bus), max_err, max_iter)
         
+        # Lets see currents
+        print("-------{}------".format(t*h))
+        if ex is not None:
+            events = ex.process_timestep(h, v_prev, events)
+
+
         if recorder != None:
             # Record signals or states
             recorder.record_variables(t*h, elements)
         
         if events != None:
             # Check event stack
-            ppc, refactorise = events.handle_events(np.round(t*h,5), elements, ppc, baseMVA)
+            # print("Event Stack {}".format(np.round(float(t)*float(h), 5)))
+            ppc, refactorise = events.handle_events(t*h, elements, ppc, baseMVA)
             
             if refactorise == True:
                 # Rebuild Ybus from new ppc_int
@@ -175,8 +214,17 @@ def run_sim(ppc, elements, dynopt = None, events = None, recorder = None):
                 Ybus_inv = splu(Ybus)
                 
                 # Solve network equations
-                v_prev = solve_network(sources, v_prev, Ybus_inv, ppc_int, len(bus), max_err, max_iter)
-                
+                v_prev = solve_network(sources, v_prev, Ybus_inv, ppc_int, len(bus), max_err, max_iter)        
+        
+        data.append(bus[:,BASE_KV]*np.abs(v_prev))
+        time.append(t*h)
+    
+    fig, ax = plt.subplots()
+    ax.plot(time, data)
+    ax.set(xlabel='time (s)', ylabel='voltage (kV)', title='Voltage PMU data')
+    ax.legend([1,2,3,4,5,6,7,8,9,10])
+    plt.savefig("results.png")
+    
     return recorder
     
 def solve_network(sources, v_prev, Ybus_inv, ppc_int, no_buses, max_err, max_iter):
@@ -205,7 +253,7 @@ def solve_network(sources, v_prev, Ybus_inv, ppc_int, no_buses, max_err, max_ite
         verr = np.abs(np.dot((vtmp-v_prev),np.transpose(vtmp-v_prev)))
         v_prev = vtmp
         i = i + 1
-    
+        #print(I)
     if i >= max_iter:
         print('Network voltages and current injections did not converge in time step...')
     
