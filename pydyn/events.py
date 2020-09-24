@@ -9,78 +9,86 @@ PYPOWER-Dynamics
 Events Class
 Sets up and handles events in the simulation
 """
-
+from pdb import set_trace as bp
 import numpy as np
 from pypower.idx_bus import BUS_I, BUS_TYPE, PD, QD, GS, BS, BUS_AREA, \
     VM, VA, VMAX, VMIN, LAM_P, LAM_Q, MU_VMAX, MU_VMIN, REF
-from pypower.idx_brch import *
-from decimal import Decimal
+
 
 class events:
     def __init__(self, filename):
         self.event_stack = []
-        self.parser(filename) 
-            
+        self.parser(filename)
+
     def parser(self, filename):
         """
         Parse an event file (*.evnt) and populate event stack
         """
         f = open(filename, 'r')
-        
+
         for line in f:
             if line[0] != '#' and line.strip() != '':   # Ignore comments and blank lines
                 tokens = line.strip().split(',')
-                
+
                 # Parse signal events
                 if tokens[1].strip() in ['SIGNAL', 'FAULT', 'LOAD', 'STATE']:
-                    self.event_stack.append([Decimal(tokens[0].strip()), tokens[1].strip(), tokens[2].strip(), tokens[3].strip(), tokens[4].strip()])
-                
-                elif tokens[1].strip() in ['CLEAR_FAULT', 'TRIP_BRANCH']:
-                    self.event_stack.append([Decimal(tokens[0].strip()), tokens[1].strip(), tokens[2].strip()])
-                    
+                    self.event_stack.append([float(tokens[0].strip()), tokens[1].strip(
+                    ), tokens[2].strip(), tokens[3].strip(), tokens[4].strip()])
+
+                elif tokens[1].strip() in ['CLEAR_FAULT', 'TRIP_BRANCH', 'DISABLE_BRANCH', 'ENABLE_BRANCH']:
+                    self.event_stack.append(
+                        [float(tokens[0].strip()), tokens[1].strip(), tokens[2].strip()])
+
+                elif tokens[1].strip() in ['PAUSE']:
+                    self.event_stack.append(
+                        [float(tokens[0].strip()), tokens[1].strip()])
+
+                elif tokens[1].strip() in ['DEBUG_C']:
+                    self.event_stack.append(
+                        [float(tokens[0].strip()), tokens[1].strip(), tokens[2].strip()])
+
         f.close()
-        
+
     def handle_events(self, t, elements, ppc, baseMVA):
         """
         Checks and handles the event stack during a simulation time step
         """
         refactorise = False
-        
+
         if self.event_stack:
-            # print(t)
-            # print(self.event_stack[0][0])
-            # print(t - self.event_stack[0][0])
             if self.event_stack[0][0] < t:
-                
-                print('Event missed at t=' + str(self.event_stack[0][0]) + 's... Check simulation time step!')
+                print('Event missed at t=' +
+                      str(self.event_stack[0][0]) + 's... Check simulation time step!')
                 del self.event_stack[0]
-            
+
             # Event exists at time step
             while self.event_stack and self.event_stack[0][0] == t:
                 event_type = self.event_stack[0][1]
-                
+
                 # Handle signal events
                 if event_type == 'SIGNAL':
                     obj_id = self.event_stack[0][2]
                     sig_id = self.event_stack[0][3]
                     value = float(self.event_stack[0][4])
                     elements[obj_id].signals[sig_id] = value
-                    
-                    print('SIGNAL event at t=' + str(t) + 's on element "' + obj_id + '". ' + sig_id + ' = ' + str(value) + '.')
-                
+
+                    print('SIGNAL event at t=' + str(t) + 's on element "' +
+                          obj_id + '". ' + sig_id + ' = ' + str(value) + '.')
+
                 if event_type == 'STATE':
                     obj_id = self.event_stack[0][2]
                     sig_id = self.event_stack[0][3]
                     value = float(self.event_stack[0][4])
                     elements[obj_id].states[sig_id] = value
-                    
-                    print('STATE event at t=' + str(t) + 's on element "' + obj_id + '". ' + sig_id + ' = ' + str(value) + '.')
-                
+
+                    print('STATE event at t=' + str(t) + 's on element "' +
+                          obj_id + '". ' + sig_id + ' = ' + str(value) + '.')
+
                 if event_type == 'FAULT':
                     bus_id = int(self.event_stack[0][2])
                     Rf = float(self.event_stack[0][3])
                     Xf = float(self.event_stack[0][4])
-                    
+
                     if Rf == 0:
                         ppc["bus"][bus_id, GS] = 1e6
                     elif Rf < 0:
@@ -88,7 +96,7 @@ class events:
                         Rf = 'Inf'
                     else:
                         ppc["bus"][bus_id, GS] = 1 / Rf * baseMVA
-                    
+
                     if Xf == 0:
                         ppc["bus"][bus_id, BS] = -1e6
                     elif Xf < 0:
@@ -96,41 +104,81 @@ class events:
                         Xf = 'Inf'
                     else:
                         ppc["bus"][bus_id, BS] = -1 / Xf * baseMVA
-                    
+
                     refactorise = True
-                    
-                    print('FAULT event at t=' + str(t) + 's on bus at row "' + str(bus_id) + '" with fault impedance Zf = ' + str(Rf) + ' + j' + str(Xf) + ' pu.')
-                
+
+                    print('FAULT event at t=' + str(t) + 's on bus at row "' + str(bus_id) +
+                          '" with fault impedance Zf = ' + str(Rf) + ' + j' + str(Xf) + ' pu.')
+
                 if event_type == 'CLEAR_FAULT':
                     bus_id = int(self.event_stack[0][2])
                     ppc["bus"][bus_id, BS] = 0
                     ppc["bus"][bus_id, GS] = 0
                     refactorise = True
-                    
-                    print('CLEAR_FAULT event at t=' + str(t) + 's on bus at row "' + str(bus_id) + '".')
-                
+
+                    print('CLEAR_FAULT event at t=' + str(t) +
+                          's on bus at row "' + str(bus_id) + '".')
+
                 if event_type == 'TRIP_BRANCH':
                     branch_id = int(self.event_stack[0][2])
-                    print(ppc["branch"][branch_id, BR_STATUS])
-                    ppc["branch"][branch_id, BR_STATUS] = 0
-                    print(ppc["branch"][branch_id, BR_STATUS])
-                    # ppc["branch"] = np.delete(ppc["branch"],branch_id, 0)
+                    ppc["branch"] = np.delete(ppc["branch"], branch_id, 0)
                     refactorise = True
-                    
-                    print('TRIP_BRANCH event at t=' + str(t) + 's on branch "' + str(branch_id) + '".')
-                
+
+                    print('TRIP_BRANCH event at t=' + str(t) +
+                          's on branch "' + str(branch_id) + '".')
+
+                if event_type == 'DISABLE_BRANCH':
+                    branch_id = int(self.event_stack[0][2])
+                    ppc["branch"][branch_id, 10] = 0
+                    refactorise = True
+
+                    print('DISABLE_BRANCH event at t=' + str(t) +
+                          's on branch "' + str(branch_id) + '"...')
+                    print('... from node ' + str(ppc["branch"][branch_id, 0]) + ' to node ' + str(
+                        ppc["branch"][branch_id, 1]) + '.')
+                    #bp()
+
+                if event_type == 'ENABLE_BRANCH':
+                    branch_id = int(self.event_stack[0][2])
+                    ppc["branch"][branch_id, 10] = 1
+                    refactorise = True
+
+                    print('ENABLE_BRANCH event at t=' + str(t) +
+                          's on branch "' + str(branch_id) + '".')
+
                 if event_type == 'LOAD':
                     bus_id = int(self.event_stack[0][2])
                     Pl = float(self.event_stack[0][3])
                     Ql = float(self.event_stack[0][4])
-                    
+
+                    print('LOAD event at t=' + str(t) +
+                          's on bus at row "' + str(bus_id) + '".')
+                    print('\tCurrent load: S = ' + str(ppc["bus"][bus_id, PD]) + ' MW + j' + str(
+                        ppc["bus"][bus_id, QD]) + ' MVAr.')
+
                     ppc["bus"][bus_id, PD] = Pl
                     ppc["bus"][bus_id, QD] = Ql
-                    
+
                     refactorise = True
-                    
-                    print('LOAD event at t=' + str(t) + 's on bus at row "' + str(bus_id) + '" with S = ' + str(Pl) + ' MW + j' + str(Ql) + ' MVAr.')
-                    
+
+                    print('\tNew load: S = ' + str(Pl) +
+                          ' MW + j' + str(Ql) + ' MVAr.')
+
+                if event_type == 'PAUSE':
+                    print('PAUSE event at t=' + str(t) + 's')
+                    bp()
+
+                if event_type == 'DEBUG_C':
+                    c_name = self.event_stack[0][2]
+                    print('DEBUG_C event at t=' +
+                          str(t) + 's on element ' + c_name)
+                    try:
+                        element = elements[c_name]
+                    except:
+                        print('Element '+c_name+" doesn't exists")
+                    bp()
+                    element.solve_step(0.001, 0)
+
                 del self.event_stack[0]
-                
+
         return ppc, refactorise
